@@ -1,0 +1,193 @@
+---
+tags: ["sylvia", "attributes"]
+---
+
+import { Callout } from "nextra/components";
+
+# `sv::msg` attribute
+
+Use the `sv::msg` attribute to mark methods as specific message types.
+
+## Macros
+
+List of macros supporting the `sv::msg` attribute:
+
+- [`contract`](../contract)
+- [`interface`](../interface)
+- [`entry_points`](../entry-points)
+
+<Callout>
+  [`interface`](../interface) macro supports the `sv::msg` attribute only with `exec`, `query` or
+  `sudo` value.
+</Callout>
+
+## Usage
+
+```rust template="sylvia-empty"
+pub struct CounterContract;
+
+#[cw_serde]
+pub struct SomeResponse;
+
+#[cfg_attr(feature = "library", sylvia::entry_points)]
+#[contract]
+impl CounterContract {
+    pub const fn new() -> Self {
+        Self
+    }
+
+    #[sv::msg(instantiate)]
+    fn instantiate(&self, ctx: InstantiateCtx) -> StdResult<Response> {
+        Ok(Response::new())
+    }
+
+    #[sv::msg(exec)]
+    fn some_exec(&self, ctx: ExecCtx) -> StdResult<Response> {
+        Ok(Response::new())
+    }
+
+    #[sv::msg(query)]
+    fn some_query(&self, ctx: QueryCtx) -> StdResult<SomeResponse> {
+        Ok(SomeResponse)
+    }
+
+    #[sv::msg(sudo)]
+    fn some_sudo(&self, ctx: SudoCtx) -> StdResult<Response> {
+        Ok(Response::new())
+    }
+
+    #[sv::msg(migrate)]
+    fn some_migrate(&self, ctx: MigrateCtx) -> StdResult<Response> {
+        Ok(Response::new())
+    }
+
+    #[sv::msg(reply)]
+    fn some_reply(&self, ctx: ReplyCtx, reply: Reply) -> StdResult<Response> {
+        Ok(Response::new())
+    }
+}
+```
+
+Notice that each message type has its context type, like
+[`InstantiateCtx`](https://docs.rs/sylvia/latest/sylvia/types/struct.InstantiateCtx.html). You are
+required to use the appropriate type. Otherwise, the dispatch will fail to compile.
+
+Each message type except for `query` expects the result type generic over
+[`Response`](https://docs.rs/cosmwasm-std/latest/cosmwasm_std/struct.Response.html).
+
+## Aliasing
+
+It is possible to use aliases for types in message signatures. In case of `query` return type it
+requires however additional action. Due to
+[`QueryResponses`](https://docs.rs/cosmwasm-schema/latest/cosmwasm_schema/derive.QueryResponses.html)
+macro derive on generated `query` message, we have to explicitly provide the return type, as the
+macro wouldn't be able to deduce that from the alias.
+
+```rust template="sylvia-cw-storage-contract"
+#[sv::msg(query, resp=SomeResponse)]
+fn some_query(&self, ctx: QueryCtx) -> SomeResult {
+    Ok(SomeResponse)
+}
+```
+
+## Handling replies
+
+<Callout>
+  To use attributes present in this paragraph pre-Sylvia `2.0.0`, you need to enable the `replies`
+  feature using the [`sv::features`](features) attribute.
+</Callout>
+
+You can use additional parameters `handlers` and `reply_on` in the `#[sv::msg(reply)]` attribute.
+
+```rust {1} template="sylvia-cw-storage-contract"
+#[sv::msg(reply, handlers=[remote_instantiated], reply_on=success)]
+fn store_remote_address(
+    &self,
+    ctx: ReplyCtx,
+    #[sv::data(instantiate, opt)] data: Option<MsgInstantiateContractResponse>,
+    payload: Option<String>
+) -> StdResult<Response> {
+    Ok(Response::new())
+}
+```
+
+<Callout>
+  This approach requires the use of `sylvia::ctx::ReplyCtx` instead of `sylvia::types::ReplyCtx` due
+  to additional fields added to this type.
+</Callout>
+
+### The handlers parameter
+
+The `handlers` parameter allows the list of names of the reply handlers that would be supported by
+the contract to be specified. Sylvia takes every unique handler name from across every `reply`
+message and generates the **reply IDs**, **dispatching** and `SubMsg` **building methods** for them.
+If the `handlers` parameter is not used, the method name is used as the handler name.
+
+```rust {1} template="sylvia-cw-storage-contract"
+#[sv::msg(reply, handlers=[tokens_transferred, tokens_staked])]
+fn update_state(
+    &self,
+    ctx: ReplyCtx,
+    result: SubMsgResult,
+    #[sv::payload(raw)] payload: Binary,
+) -> StdResult<Response> {
+    Ok(Response::new())
+}
+```
+
+### The reply_on parameter
+
+The `reply_on` parameter specifies in which scenario should the reply method be called. It reflects
+the [`cosmwasm_std::ReplyOn`](https://docs.rs/cosmwasm-std/latest/cosmwasm_std/enum.ReplyOn.html)
+and it supports values: `success`, `error` and `always`. The `ReplyOn::Never` is not reflected since
+creating a reply method that would never be called is counterproductive. If the `reply_on` parameter
+is not used, the default value is `always`.
+
+The same handler name can be used twice across the methods only if one has `reply_on=Success` and
+the other one `reply_on=Error`. This way, we can have different handling for **success** and
+**error** for the same **reply ID**.
+
+```rust {1, 5, 11, 15, 21, 25} template="sylvia-cw-storage-contract"
+#[sv::msg(reply, handlers=[tokens_transferred], reply_on=success)]
+fn update_state(
+    &self,
+    ctx: ReplyCtx,
+    #[sv::data(raw)] data: Binary,
+    #[sv::payload(raw)] payload: Binary,
+) -> StdResult<Response> {
+    Ok(Response::new())
+}
+
+#[sv::msg(reply, handlers=[tokens_transferred], reply_on=error)]
+fn revert_state(
+    &self,
+    ctx: ReplyCtx,
+    error: String,
+    #[sv::payload(raw)] payload: Binary,
+) -> StdResult<Response> {
+    Ok(Response::new())
+}
+
+#[sv::msg(reply, reply_on=always)]
+fn update_or_revert_state(
+    &self,
+    ctx: ReplyCtx,
+    result: SubMsgResult,
+    #[sv::payload(raw)] payload: Binary,
+) -> StdResult<Response> {
+    Ok(Response::new())
+}
+```
+
+Notice different method parameters depending on the `reply_on` value. On:
+
+- `success` -
+  [`SubMsgResponse::data`](https://docs.rs/cosmwasm-std/latest/cosmwasm_std/struct.SubMsgResponse.html)
+  is being passed as an argument to the method. Depending on the [`sv::data`](data) value, it can
+  be, among others, forwarded as an `Option<Binary>` or deserialized to your custom type.
+- `error` -
+  [`SubMsgResult::Err(error)`](https://docs.rs/cosmwasm-std/latest/cosmwasm_std/enum.SubMsgResult.html)
+  is forwarded as an argument to the method.
+- `always` -
+  [`SubMsgResult`](https://docs.rs/cosmwasm-std/latest/cosmwasm_std/enum.SubMsgResult.html) is
+  passed as an argument to the method.

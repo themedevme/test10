@@ -1,0 +1,121 @@
+---
+tags: ["sylvia", "macros"]
+---
+
+import { Callout } from "nextra/components";
+
+# Interface
+
+Use the [`interface`](https://docs.rs/sylvia/latest/sylvia/attr.interface.html) macro to abstract
+semantic parts of your contracts.
+
+<Callout>Use `interface` macro only on Rust traits.</Callout>
+
+## Usage
+
+```rust template="sylvia-empty"
+#[cw_serde]
+pub struct InterfaceQueryResp {}
+
+#[interface]
+pub trait Interface {
+    type Error: From<StdError>;
+
+    #[sv::msg(exec)]
+    fn interface_exec(&self, ctx: ExecCtx) -> Result<Response, Self::Error>;
+
+    #[sv::msg(query)]
+    fn interface_query(&self, ctx: QueryCtx) -> Result<InterfaceQueryResp, Self::Error>;
+
+    #[sv::msg(sudo)]
+    fn interface_sudo(&self, ctx: SudoCtx) -> Result<Response, Self::Error>;
+}
+```
+
+As mentioned earlier `interface` macro is used attached to the Rust traits.
+
+We define the `Error` associated type. Thanks to that, future contracts implementing this interface
+will be able to assign their error type to it and have wider range of errors than the `StdError`.
+
+<Callout>
+  `Error` associated type is the only mandatory thing to be defined for the `interface` macro.
+</Callout>
+
+Then we can define our messages signatures. We do that by marking the methods with the
+[`sv::msg`](attributes/msg) attribute.
+
+## Custom types
+
+You can construct your interface to work with some specific custom types with the
+[`sv::custom`](attributes/custom) attribute. Use of `sv::custom` restricts the interface to work
+with the predefined custom types.
+
+If you want to allow the users to use the interface with their own specified custom types, you can
+declare `ExecC` and `QueryC` associated types, where `ExecC` specifies the `CustomMsg` and `QueryC`
+the `CustomQuery`.
+
+```rust template="sylvia-empty"
+#[cw_serde]
+pub struct InterfaceQueryResp {}
+
+#[interface]
+pub trait Interface {
+    type Error: From<StdError>;
+    type ExecC: CustomMsg;
+    type QueryC: CustomQuery;
+
+    #[sv::msg(exec)]
+    fn interface_exec(&self, ctx: ExecCtx<Self::QueryC>) -> StdResult<Response<Self::ExecC>>;
+
+    #[sv::msg(query)]
+    fn interface_query(&self, ctx: QueryCtx<Self::QueryC>) -> StdResult<InterfaceQueryResp>;
+
+    #[sv::msg(sudo)]
+    fn interface_sudo(&self, ctx: SudoCtx<Self::QueryC>) -> StdResult<Response<Self::ExecC>>;
+}
+```
+
+<Callout>Remember to pass the associated types to context and `Response` types.</Callout>
+
+## Generic types
+
+The `interface` macro does not support generics. Instead, you can provide generic functionality
+using the associated types. It's because Sylvia interfaces can be implemented only once per
+contract, and in such a case, associated types are semantically correct in Rust.
+
+```rust template="sylvia-empty"
+#[interface]
+pub trait Interface {
+    type Error: From<StdError>;
+    type MyType: CustomMsg;
+
+    #[sv::msg(exec)]
+    fn interface_exec(&self, ctx: ExecCtx, param: Self::MyType) -> StdResult<Response>;
+}
+```
+
+## Forwarding attributes to fields
+
+The [`interface`](https://docs.rs/sylvia/latest/sylvia/attr.interface.html) macro can forward
+attributes to the fields of the messages.
+
+```rust {5}
+#[sv::msg(exec)]
+fn exec(
+    &self,
+    ctx: ExecCtx,
+    #[serde(default)] value: String,
+) -> Result<Response, Self::Error>;
+```
+
+The output of the above code will be:
+
+```rust {3}, template="sylvia-empty"
+#[cw_serde]
+pub enum MyInterfaceExecMsg {
+    Exec {
+        #[serde(default)]
+        value: String,
+    },
+}
+```

@@ -1,0 +1,201 @@
+---
+tags: ["sylvia", "macro"]
+---
+
+import { Callout, Tabs } from "nextra/components";
+
+# Generated communication helpers
+
+Sylvia exposes types to ease communication between contracts. Currently there are two types:
+
+- [`BoundQuerier`](../../types/communication#boundquerier) - for sending query messages,
+- [`ExecutorBuilder`](../../types/communication#executorbuilder) - for building execute messages.
+
+The [`contract`](../contract) and [`interface`](../interface) expand these types by generating and
+implementing traits with methods representing execute and query methods
+
+Examples in the following paragraphs are generated from the below contract:
+
+```rust template="sylvia-empty"
+pub struct Contract;
+
+#[contract]
+impl Contract {
+    pub const fn new() -> Self {
+        Self
+    }
+
+    #[sv::msg(instantiate)]
+    fn instantiate(&self, ctx: InstantiateCtx, mutable: bool) -> StdResult<Response> {
+        Ok(Response::new())
+    }
+
+    #[sv::msg(exec)]
+    fn some_exec(&self, ctx: ExecCtx, addr: String) -> StdResult<Response> {
+        Ok(Response::new())
+    }
+
+    #[sv::msg(query)]
+    fn some_query(&self, ctx: QueryCtx, addr: String) -> StdResult<SomeResponse> {
+        Ok(SomeResponse)
+    }
+}
+```
+
+## Query helpers
+
+Sylvia macros generate a `Querier` trait that mirrors all of the methods marked with the
+[`sv::msg(query)`](../attributes/msg.mdx) attribute. This trait is then implemented on the
+[`BoundQuerier`](../../types/communication#boundquerier) type. Implementation of each method
+constructs the appropriate message and sends it to the contract.
+
+```rust
+pub trait Querier {
+    fn some_query(&self, addr: String) -> Result<SomeResponse, sylvia::cw_std::StdError>;
+}
+impl<'a, C: sylvia::cw_std::CustomQuery> Querier
+    for sylvia::types::BoundQuerier<'a, C, Contract>
+{
+    fn some_query(&self, addr: String) -> Result<SomeResponse, sylvia::cw_std::StdError> {
+        let query = <Contract as sylvia::types::ContractApi>::Query::some_query(addr);
+        self.querier().query_wasm_smart(self.contract(), &query)
+    }
+}
+```
+
+## Executor helpers
+
+Sylvia macros generate an `Executor` trait that mirrors all of the methods marked with the
+[`sv::msg(exec)`](../attributes/msg.mdx) attribute. This trait is then implemented on the
+[`ExecutorBuilder`](../../types/communication#executorbuilder) type. Implementation of each method
+constructs the appropriate message and returns the
+[`ExecutorBuilder`](../../types/communication#executorbuilder) generic over
+[`ReadyExecutorBuilderState`](https://docs.rs/sylvia/latest/sylvia/types/struct.ReadyExecutorBuilderState.html).
+
+```rust
+pub trait Executor {
+    fn some_exec(
+        self,
+        addr: String,
+    ) -> Result<
+        sylvia::types::ExecutorBuilder<sylvia::types::ReadyExecutorBuilderState>,
+        sylvia::cw_std::StdError,
+    >;
+}
+impl Executor
+    for sylvia::types::ExecutorBuilder<(
+        sylvia::types::EmptyExecutorBuilderState,
+        CounterContract,
+    )>
+{
+    fn some_exec(
+        self,
+        addr: String,
+    ) -> Result<
+        sylvia::types::ExecutorBuilder<sylvia::types::ReadyExecutorBuilderState>,
+        sylvia::cw_std::StdError,
+    > {
+        Ok(sylvia::types::ExecutorBuilder::<
+            sylvia::types::ReadyExecutorBuilderState,
+        >::new(
+            self.contract().to_owned(),
+            self.funds().to_owned(),
+            sylvia::cw_std::to_json_binary(
+                &<CounterContract as sylvia::types::ContractApi>::Exec::some_exec(addr),
+            )?,
+        ))
+    }
+}
+```
+
+## ContractApi implementation
+
+The [`contract`](../contract) macro generates an implementation of
+[`ContractApi`](https://docs.rs/sylvia/latest/sylvia/types/trait.ContractApi.html) on the contract
+type.
+
+This trait was created for internal use of the generated code to ease work with generic contracts.
+
+<Callout>We reserve the right to break the API of this trait between minor releases.</Callout>
+
+```rust
+impl sylvia::types::ContractApi for Contract {
+    type ContractExec = ContractExecMsg;
+    type ContractQuery = ContractQueryMsg;
+    type ContractSudo = ContractSudoMsg;
+    type Exec = ExecMsg;
+    type Query = QueryMsg;
+    type Sudo = SudoMsg;
+    type Instantiate = InstantiateMsg;
+    type Migrate = sylvia::cw_std::Empty;
+    type Remote<'remote> = sylvia::types::Remote<'remote, Self>;
+    type Querier<'querier> = sylvia::types::BoundQuerier<'querier, Empty, Self>;
+    type CustomMsg = Empty;
+    type CustomQuery = Empty;
+}
+```
+
+## InterfaceApi implementation
+
+<Callout>
+  This trait will is deprecated and will be removed in the `2.0.0` release in favor of generated
+  `InterfaceMessagesApi`.
+</Callout>
+
+The [`interface`](../interface) macro generates an `Api` type and implements the
+[`InterfaceApi`](https://docs.rs/sylvia/latest/sylvia/types/trait.InterfaceApi.html) on the it.
+
+This trait was created for internal use of the generated code to ease working with generic
+contracts.
+
+<Callout>We reserve the right to break the API of this trait between the minor releases.</Callout>
+
+```rust
+pub struct Api<ExecC, QueryC, CounterT> {
+    _phantom: std::marker::PhantomData<(ExecC, QueryC, CounterT)>,
+}
+
+#[allow(deprecated)]
+impl<ExecC, QueryC, CounterT> sylvia::types::InterfaceApi for Api<ExecC, QueryC, CounterT>
+where
+    ExecC: CustomMsg,
+    QueryC: CustomQuery,
+    CounterT: Serialize + DeserializeOwned + std::fmt::Debug,
+{
+    type Exec = ExecMsg<CounterT>;
+    type Query = QueryMsg<CounterT>;
+    type Sudo = SudoMsg;
+    type Querier<'querier, Contract> =
+        sylvia::types::BoundQuerier<'querier, sylvia::cw_std::Empty, Contract>;
+}
+```
+
+## InterfaceMessagesApi trait generation
+
+The [`interface`](../interface) macro generates an `Api` type and implements the
+[`InterfaceApi`](https://docs.rs/sylvia/latest/sylvia/types/trait.InterfaceApi.html) on the it.
+
+This trait was created for internal use of the generated code to ease working with generic
+contracts.
+
+<Callout>We reserve the right to break the API of this trait between the minor releases.</Callout>
+
+```rust
+pub struct Api<ExecC, QueryC, CounterT> {
+    _phantom: std::marker::PhantomData<(ExecC, QueryC, CounterT)>,
+}
+
+#[allow(deprecated)]
+impl<ExecC, QueryC, CounterT> sylvia::types::InterfaceApi for Api<ExecC, QueryC, CounterT>
+where
+    ExecC: CustomMsg,
+    QueryC: CustomQuery,
+    CounterT: Serialize + DeserializeOwned + std::fmt::Debug,
+{
+    type Exec = ExecMsg<CounterT>;
+    type Query = QueryMsg<CounterT>;
+    type Sudo = SudoMsg;
+    type Querier<'querier, Contract> =
+        sylvia::types::BoundQuerier<'querier, sylvia::cw_std::Empty, Contract>;
+}
+```
